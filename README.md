@@ -47,27 +47,31 @@ Computational environment
 
 The simulations and statistical analyses were carried out in R.
 
-R scripts
+Standalone R scripts
+
+For ease of access, selected simulation and analysis code from the notebooks is also provided as standalone R scripts. These scripts were created after the main analyses so that the code can be inspected more easily without reading through the full notebooks.
+
+The analyses reported in the project were carried out from the QMD notebooks. The standalone scripts are provided for accessibility and reference and were not used as separate analysis files during the original workflow.
 
 functions.R
 
-Contains the main functions used in the simulations and analyses, including statistical calculations, multiple-comparison procedures, onset-estimation methods, and aggregation of results.
+Contains extracted helper functions used in the notebook analyses.
 
 main_sim.R
 
-Runs the main simulation with 50 trials per condition, together with the independent diagnostic simulation used for electrode-level analyses.
+Contains the code corresponding to the main 50-trial simulation and the electrode-level diagnostic simulation.
 
 size_sim.R
 
-Runs the trial-number sensitivity analysis at 25, 50, 75, and 100 trials per condition.
+Contains the code corresponding to the trial-number sensitivity analysis at 25, 50, 75, and 100 trials per condition.
 
 mv_sim.R
 
-Runs the multivariate simulation used in multiv.notebook.qmd.
+Contains the code corresponding to the multivariate simulation.
 
 analyse_results.R
 
-Contains additional code for organising, checking, and analysing the saved simulation results.
+Contains extracted code for organising, checking, and summarising the saved simulation results.
 
 Data files
 
@@ -114,7 +118,7 @@ Suggested order for exploring the project
 2. sim.notebook.qmd to examine the main comparison of onset-estimation methods.
 3. multiv.notebook.qmd to examine the multivariate extension.
 
-To rerun the simulations themselves, use main_sim.R, size_sim.R, and mv_sim.R.
+The standalone R scripts can be consulted separately when direct access to the code is preferred over reading the full notebooks.
 
 Reference
 
