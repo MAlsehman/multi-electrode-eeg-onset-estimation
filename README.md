@@ -110,6 +110,8 @@ The data-generation workflow uses the following supporting files:
 * code/meanpower.txt for power-spectrum information used for noise generation
 * code/theme_dark_bw.R for the shared plotting theme used across the notebooks
 
+Some simulation components in the code/ directory originate from Guillaume Rousselet’s onsetsim repository and remain subject to the original MIT License. A copy of that licence is included as code/LICENSE_Rousselet.txt.
+
 The directory structure should be preserved so that the source() calls and file paths work without modification.
 
 Suggested order for exploring the project
