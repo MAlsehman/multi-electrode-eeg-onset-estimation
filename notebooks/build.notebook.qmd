@@ -1,0 +1,346 @@
+---
+title: "Simulating EEG onset across electrodes: signal generation and spatial attenuation"
+author: "Maram"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    toc-location: left
+    number-sections: true
+    code-tools: true
+    code-fold: true
+    embed-resources: true
+execute:
+  echo: true
+  message: false
+  warning: false
+---
+
+```{r setup}
+# packages
+library(tidyverse)     # data wrangling and plotting
+
+# code and data from Rousselet (2025)
+source("code/eeg_noise.R")              # noise generator
+source("code/erp_template.R")           # signal template
+meanpower <- scan("code/meanpower.txt") # noise power spectrum
+
+# figures
+knitr::opts_chunk$set(fig.width = 8, fig.height = 5)
+source("code/theme_dark_bw.R")          # plotting theme
+
+# reproducibility
+set.seed(26)
+```
+
+# Introduction
+
+This notebook builds the simulated EEG data used to estimate when an experimental effect begins, and to test how that estimate holds up as the signal weakens across electrodes. The quantity of interest is the onset, the moment at which two conditions start to differ. It is difficult to estimate, because at the moment the effect begins the signal is at its weakest while the noise, the background electroencephalogram activity, is unchanged. The onset therefore has the worst signal-to-noise ratio in the epoch. Rousselet (2025) treats the onset as a second-order property of the data, meaning that it is not defined by the value at any one time point but by a sustained absence of effect giving way to a sustained presence of one. What is being sought is therefore a change in the pattern rather than a single striking sample.
+
+The signal and the noise are both generated with the simulation code from Rousselet (2025). The single-electrode case comes first, as a baseline, and the model is then extended to nine electrodes with a weight parameter controlling how much of the signal reaches each one. The question that follows, taken up in the companion simulation, is whether the true onset can still be recovered as that weight falls, and how the estimation methods compare.
+
+Two accounts of ERP generation are relevant here. Under the classical evoked model, a phasic response is added to ongoing background activity, so that averaging across trials suppresses activity that is inconsistent across trials and reveals the event-related response. An alternative account is that an event can reorganise the phase of ongoing oscillatory activity, allowing phase-locked activity to survive averaging. The present simulation assumes the former model because it adds the same deterministic template to independently generated background noise on each trial. An averaged ERP alone, however, does not cleanly distinguish between these mechanisms (Luck, 2014).
+
+# The signal at one electrode (baseline)
+
+## Description
+
+The signal is an ERP, an event-related potential: an electrical response of the brain whose timing is fixed relative to the presentation of a stimulus (McWeeny & Norton, 2020). The template is taken from Rousselet (2025) unchanged. It is a Gaussian truncated so that the signal is exactly zero until 160 ms, which is what fixes the onset at a value known in advance; it then rises to a peak at 250 ms and returns to baseline. The epoch contains 251 time points spanning 0–500 ms in 2-ms steps, corresponding to a sampling rate of 500 Hz; the signal returns to zero at 342 ms. In the code, `temp2` holds the signal and `Xf` the time axis in milliseconds.
+
+## Justification
+
+The template is deliberately one whose answer is already known. With the onset fixed at 160 ms by construction, every later estimate can be scored directly against the known value, allowing estimation error to be measured.
+
+## Code
+
+```{r}
+sig_tbl <- tibble(time = Xf, signal = temp2)
+
+# a small summary of the template, computed from the signal itself
+signal_info <- tibble(
+  property = c("first non-zero point (ms)",
+               "true onset (ms)",
+               "peak latency (ms)",
+               "last non-zero point (ms)",
+               "number of time points",
+               "sampling step (ms)"),
+  value = c(Xf[which(temp2 > 0)[1]],
+            true_onset,
+            Xf[which.max(temp2)],
+            Xf[max(which(temp2 > 0))],
+            length(Xf),
+            Xf[2] - Xf[1])
+)
+```
+
+## Table
+
+```{r}
+#| label: tbl-signal
+#| tbl-cap: "Key landmarks of the signal template at one electrode."
+knitr::kable(signal_info)
+```
+
+## Figure
+
+```{r}
+#| label: fig-signal1
+#| fig-cap: "Signal template at one electrode. The waveform is flat before the true onset at 160 ms and then rises gradually to its peak."
+#| fig-alt: "White line on a black background showing signal amplitude from 0 to 500 ms. The signal is flat at zero before a dashed vertical line at 160 ms, then rises gradually to a peak near 250 ms and returns toward baseline."
+ggplot(sig_tbl, aes(time, signal)) +
+  geom_line(linewidth = 1, colour = "#ffffff") +
+  geom_vline(xintercept = true_onset, linetype = "dashed", colour = "#ffffff", linewidth = 0.8) +
+  labs(x = "Time (ms)", y = "Amplitude (a.u.)") +
+  theme_dark_bw()
+```
+
+## Observations
+
+The first non-zero point of the template coincides with the declared onset of 160 ms, and the peak falls at 250 ms, both matching the published description of the signal (Rousselet, 2025). The rise from baseline is gradual rather than abrupt, so the signal is weakest near the onset; the noise that compounds this difficulty is added in the next section.
+
+# The noise at one electrode
+
+## Description
+
+The noise comes next, with no signal added. It is generated with the code from Rousselet (2025), which implements the approach of Yeung et al. (2004), who simulated EEG using noise whose spectrum was matched to recorded EEG. Each trial is the sum of 50 sinusoids with random phases and increasing random frequencies, and the amplitude of each sinusoid is read from an empirical EEG power spectrum rather than chosen freely, so the low frequencies dominate as they do in the recorded spectrum. Each trial is then standardised, so that with `outvar = 1` the noise has unit variance. The template peaks at an amplitude of 1, which makes signal and noise directly comparable in scale.
+
+## Justification
+
+Examining the noise before any signal is mixed in establishes how strong and how structured it is, and so sets the expectation for how difficult the signal will be to detect once the two are combined.
+
+## Code
+
+```{r}
+noise_examples <- replicate(4, eeg_noise(frames = Nf, srate = 500,
+                                         outvar = 1, meanpower = meanpower))
+colnames(noise_examples) <- paste0("trial", 1:4)
+
+noise_tbl <- as_tibble(noise_examples) |>
+  mutate(time = Xf) |>
+  pivot_longer(-time, names_to = "trial", values_to = "amp")
+```
+
+## Figure
+
+```{r}
+#| label: fig-noise
+#| fig-cap: "Four example EEG-like noise trials generated independently from the same noise model."
+#| fig-alt: "Four small panels on a black background, each containing a white noise waveform from 0 to 500 ms. The waveforms differ across trials and show smooth, temporally structured fluctuations rather than point-to-point white noise."
+ggplot(noise_tbl, aes(time, amp)) +
+  geom_line(colour = "#ffffff") +
+  facet_wrap(~trial, ncol = 2) +
+  labs(x = "Time (ms)", y = "Amplitude") +
+  theme_dark_bw() +
+  theme(strip.text = element_text(colour = "#ffffff", face = "bold"))
+```
+
+## Observations
+
+The four panels differ from one another because the frequencies and phases are drawn afresh for each trial, and every panel is dominated by slow fluctuations rather than point-to-point jitter. This is not white noise but temporally structured noise with an EEG-like power spectrum. A single noisy trial therefore provides a poor basis for localising a small onset effect, which is why the conditions are compared after averaging.
+
+# The scenario: comparing two conditions
+
+## Description
+
+Everything in the project rests on this scenario. Two conditions are measured at every time point: condition A is noise only, condition B is signal plus noise. They have the same expected value before the onset; after it, condition B contains an additional positive signal component. The onset is the moment at which that difference begins. Each condition is averaged over 50 trials, the number used in Rousselet (2025).
+
+## Justification
+
+Averaging is what makes the signal visible. The signal is identical on every trial while the noise is random, so averaging suppresses the noise and leaves the template (Luck, 2014). Setting the scenario out explicitly matters because estimating the onset, the stage that follows, amounts to finding where condition B departs from condition A.
+
+## Code
+
+```{r}
+Nt <- 50   # trials per condition
+
+condA_mean <- rowMeans(replicate(Nt, eeg_noise(Nf, 500, 1, meanpower)))          # noise only
+condB_mean <- rowMeans(replicate(Nt, temp2 + eeg_noise(Nf, 500, 1, meanpower)))  # signal + noise
+
+model_tbl <- tibble(time = Xf,
+                    `noise only` = condA_mean,
+                    `signal + noise` = condB_mean) |>
+  pivot_longer(-time, names_to = "condition", values_to = "amp")
+```
+
+## Figure
+
+```{r}
+#| label: fig-model
+#| fig-cap: "Two-condition simulation model. The conditions have the same expected value before 160 ms; after onset, condition B contains the added ERP signal."
+#| fig-alt: "Two white waveforms on a black background, distinguished by solid and dashed line types. They overlap around baseline before a vertical onset marker at 160 ms. After that marker, the signal-plus-noise condition rises above the noise-only condition."
+ggplot(model_tbl, aes(time, amp, linetype = condition, group = condition)) +
+  geom_line(linewidth = 1, colour = "#ffffff") +
+  geom_vline(xintercept = true_onset, linetype = "longdash", colour = "#ffffff") +
+  annotate("text", x = 60,  y = max(condB_mean) * 0.9, label = "no effect", colour = "#ffffff", fontface = "bold") +
+  annotate("text", x = 300, y = max(condB_mean) * 0.9, label = "effect",    colour = "#ffffff", fontface = "bold") +
+  labs(x = "Time (ms)", y = "Amplitude (a.u.)") +
+  scale_linetype_bw() +
+  theme_dark_bw()
+```
+
+## A side observation
+
+The difference between the two averaged waveforms can be examined directly. Before the onset it stays in a narrow band around zero; afterwards the values shift upward and occupy a wider range.
+
+```{r}
+#| label: fig-dist
+#| fig-cap: "Distribution of the averaged condition difference before and after the true onset."
+#| fig-alt: "Two white frequency-polygons on a black background, distinguished by solid and dashed line types. The before-onset distribution is concentrated around zero, whereas the after-onset distribution is shifted toward positive differences and spans a wider range."
+diff_vals <- condB_mean - condA_mean
+dist_tbl <- tibble(
+  value  = c(diff_vals[Xf < true_onset], diff_vals[Xf >= true_onset]),
+  period = c(rep("before onset", sum(Xf < true_onset)),
+             rep("after onset",  sum(Xf >= true_onset)))
+)
+ggplot(dist_tbl, aes(value, linetype = period, group = period)) +
+  geom_freqpoly(colour = "#ffffff", bins = 20, linewidth = 0.8) +
+  labs(x = "Difference (condition B minus condition A)", y = "Count", linetype = "Period") +
+  scale_linetype_bw() +
+  theme_dark_bw()
+```
+
+## Observations
+
+The wider range is not evidence that the effect alters the variability of the data. It follows from the shape of the template, which rises to a peak and returns to zero, so the post-onset window contains values at every amplitude between zero and the maximum while the pre-onset window holds only noise around zero. Because the same deterministic signal is added to every trial, the manipulation changes the trial-wise mean at each time point but not the trial-wise variance by construction. Under a phase-resetting account, by contrast, an event reorganises ongoing oscillatory activity rather than simply adding a fixed template. Such resetting can itself become visible in the time-domain average and may produce a deflection that is difficult to distinguish from an additive ERP (Mouraux & Iannetti, 2008). That mechanism is not represented in the present simulation.
+
+# The weights for nine electrodes
+
+## Description
+
+The spatial dimension comes in here. Every electrode receives the same ERP, scaled by a weight: 1 at the centre, where the template arrives in full, 0 at the four outermost electrodes, which carry noise only, and intermediate values in between. The nine weights are 0, 0, 0.3, 0.75, 1, 0.75, 0.3, 0, 0.
+
+## Justification
+
+The weights are a deliberately simple stand-in for how a signal spreads across the scalp and weakens away from its source. The onset is held fixed at every electrode and only the amplitude changes, so that when the onset is later estimated, any difference between electrodes must come from the weight, not from a different underlying signal. These weights are not intended as a biophysical model of volume conduction; they provide a simple way to vary signal strength across electrodes while keeping the true onset fixed.
+
+The scale makes the difficulty concrete. The noise has unit variance and each condition is averaged over 50 trials, so the difference between the two averaged waveforms has a standard deviation of \(\sqrt{2/50}\), that is 0.2. An electrode of weight 1 therefore reaches a peak of about five times that spread, an electrode of weight 0.3 only about one and a half times it, and at the onset itself, where the template is still near zero, the ratio is far smaller at every electrode.
+
+The four zero-weight electrodes are included on purpose. No effect exists there to be found, so any onset reported at one of them is a false positive, and their detection rate measures the error rate of a method rather than its sensitivity.
+
+## Code
+
+```{r}
+w <- c(0, 0, 0.3, 0.75, 1, 0.75, 0.3, 0, 0)
+elec <- 1:9
+w_tbl <- tibble(electrode = factor(paste0("E", elec), levels = paste0("E", elec)),
+                weight    = w)
+```
+
+## Figure
+
+```{r}
+#| label: fig-weights
+#| fig-cap: "Fixed signal weights across the nine electrodes, peaking at the central electrode and falling to zero at the outer electrodes."
+#| fig-alt: "Nine outlined white bars on a black background labelled E1 to E9. Their heights are 0, 0, 0.3, 0.75, 1, 0.75, 0.3, 0 and 0, forming a symmetric peak at E5. Each bar has its numeric weight printed above it."
+ggplot(w_tbl, aes(electrode, weight)) +
+  geom_col(fill = "#000000", colour = "#ffffff", linewidth = 0.7) +
+  geom_text(aes(label = weight), vjust = -0.4, colour = "#ffffff", fontface = "bold") +
+  ylim(0, 1.1) +
+  labs(x = "Electrode", y = "Weight") +
+  theme_dark_bw()
+```
+
+## Observations
+
+All signal-carrying electrodes share the same true onset at 160 ms, and only the amplitude changes with the weight. The low-weight electrodes are expected to provide the least favourable conditions for onset estimation, and the zero-weight ones serve as a check on false positives rather than as a test of sensitivity.
+
+# The signal at nine electrodes (no noise)
+
+## Description
+
+The signal at each electrode is the single-electrode template scaled by that electrode's weight. `outer(temp2, w)` does this in one step and returns a time-by-electrode matrix, one column per electrode.
+
+## Justification
+
+The signal is checked without noise first, to confirm that the weighting behaves as intended before the noise makes anything harder to read.
+
+## Code
+
+```{r}
+signal_9 <- outer(temp2, w)              # 251 x 9 matrix, one column per electrode
+colnames(signal_9) <- paste0("E", elec)
+
+# checks: shape, and the same onset at every electrode carrying signal
+dim(signal_9)                                                    # expect 251 x 9
+sapply(which(w > 0), function(e) Xf[which(signal_9[, e] > 0)[1]])  # expect 160 each
+
+# retain all nine electrodes for the signal-only display
+sig9_tbl <- as_tibble(signal_9) |>
+  mutate(time = Xf) |>
+  pivot_longer(-time, names_to = "electrode", values_to = "amp") |>
+  mutate(electrode = factor(electrode, paste0("E", elec),
+                            paste0("E", elec, " (w=", w, ")")))
+```
+
+## Figure
+
+```{r}
+#| label: fig-signal9
+#| fig-height: 8
+#| fig-cap: "Signal-only waveforms at all nine electrodes. Electrode weights change amplitude but not the common 160-ms onset at the five signal-bearing electrodes."
+#| fig-alt: "Nine black-and-white electrode panels labelled E1 to E9 with their weights. The five positive-weight electrodes show the same temporal waveform at different amplitudes and begin at the common 160 millisecond onset; the four zero-weight electrodes remain flat."
+ggplot(sig9_tbl, aes(time, amp)) +
+  geom_line(colour = "#ffffff", linewidth = 0.9) +
+  geom_vline(xintercept = true_onset, linetype = "longdash", colour = "#ffffff") +
+  facet_wrap(~electrode, ncol = 3) +
+  labs(x = "Time (ms)", y = "Amplitude (a.u.)") +
+  theme_dark_bw()
+```
+
+## Observations
+
+Every signal-carrying electrode has its first non-zero point at 160 ms. Across the nine displayed electrodes, weighting changes amplitude while leaving the programmed onset untouched; electrodes with equal weights therefore have identical signal-only waveforms. The underlying matrix also has the shape required for the noise stage that follows.
+
+# Signal plus noise at nine electrodes
+
+## Description
+
+Now the signal-plus-noise case. Noise is added to each electrode's weighted signal and averaged over 50 trials, giving one ERP per electrode.
+
+## Justification
+
+This is the input the onset methods have to work with, and seeing how far the noise hides the signal, particularly at the weaker electrodes, sets expectations for what any of them can recover. Independent noise was used across electrodes because it provides a deliberately demanding case for spatial aggregation: noise at one electrode is not cancelled by shared structure at neighbouring electrodes. This was chosen as a conservative simulation scenario. However, it should not be interpreted as implying that independent noise is necessarily the most difficult dependence structure for every onset-estimation method; performance under spatially correlated EEG noise is not evaluated here.
+
+## Code
+
+```{r}
+erp_9 <- sapply(1:9, function(e){
+  rowMeans(replicate(Nt, signal_9[, e] + eeg_noise(Nf, 500, 1, meanpower)))
+})
+colnames(erp_9) <- paste0("E", elec)
+
+erp9_tbl <- as_tibble(erp_9) |>
+  mutate(time = Xf) |>
+  pivot_longer(-time, names_to = "electrode", values_to = "amp")
+```
+
+## Figure
+
+```{r}
+#| label: fig-erp9
+#| fig-height: 8
+#| fig-cap: "Signal plus independently generated EEG-like noise at each of the nine electrodes, averaged over 50 trials per electrode."
+#| fig-alt: "Nine small panels arranged in a grid, one for electrodes E1 through E9. Each panel shows a single white averaged waveform on a black background with a vertical onset marker at 160 ms. The central high-weight electrodes show a clearer post-onset positive signal; weak and zero-weight electrodes remain more dominated by noise."
+ggplot(erp9_tbl, aes(time, amp)) +
+  geom_line(colour = "#ffffff", linewidth = 0.7) +
+  geom_vline(xintercept = true_onset, linetype = "longdash", colour = "#ffffff") +
+  facet_wrap(~electrode, ncol = 3) +
+  labs(x = "Time (ms)", y = "Amplitude (a.u.)") +
+  theme_dark_bw()
+```
+
+## Observations
+
+Even after averaging the noise does not fully disappear, and on the weak electrodes the signal is nearly lost in it. At weakly weighted electrodes, onset estimation is therefore expected to be less stable.
+
+# Next: onset estimation
+
+The data generated here provide a single realisation of the simulation model. Because a new draw of noise can change the estimated onset even when the true onset remains fixed at 160 ms, performance is evaluated over repeated Monte Carlo simulations in `sim.notebook.qmd`.
+
+# References
+
+- Luck, S. J. (2014). *An introduction to the event-related potential technique* (2nd ed.). MIT Press.
+- McWeeny, S., & Norton, E. S. (2020). Understanding event-related potentials (ERPs) in clinical and basic language and communication disorders research: A tutorial. *International Journal of Language & Communication Disorders, 55*(4), 445-457. https://doi.org/10.1111/1460-6984.12535
+- Mouraux, A., & Iannetti, G. D. (2008). Across-trial averaging of event-related EEG responses and beyond. *Magnetic Resonance Imaging, 26*(7), 1041-1054. https://doi.org/10.1016/j.mri.2008.01.011
+- Rousselet, G. A. (2025). Using cluster-based permutation tests to estimate MEG/EEG onsets: How bad is it? *European Journal of Neuroscience, 61*(1), e16618. https://doi.org/10.1111/ejn.16618
+- Yeung, N., Bogacz, R., Holroyd, C. B., & Cohen, J. D. (2004). Detection of synchronized oscillations in the electroencephalogram: An evaluation of methods. *Psychophysiology, 41*(6), 822-832. https://doi.org/10.1111/j.1469-8986.2004.00239.x
