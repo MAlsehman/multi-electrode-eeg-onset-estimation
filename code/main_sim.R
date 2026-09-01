@@ -1,6 +1,6 @@
 # main_sim.R
 # Main production EEG onset simulation.
-# Runs 10,000 iterations at 50 trials per condition and saves the main and diagnostic outputs.
+# Runs an initial 1,000-iteration diagnostic simulation, followed by the 10,000-iteration primary simulation at 50 trials per condition.
 
 # packages
 library(tidyverse)     # data wrangling and plotting
@@ -158,6 +158,35 @@ experiment_onsets <- function(){
 }
 
 
+# Initial diagnostic simulation: 1,000 iterations at 50 trials per condition.
+# This is a separate Monte Carlo run used for electrode-level diagnostics.
+niter_diag  <- 1000
+notify_diag <- 100
+
+pe_diag_list <- vector("list", niter_diag)
+vi_diag_list <- vector("list", niter_diag)
+
+for(it in seq_len(niter_diag)){
+  if(it %% notify_diag == 0){
+    message("diagnostic iteration ", it, " / ", niter_diag)
+  }
+
+  r <- experiment_onsets()
+
+  pe_diag_list[[it]] <- mutate(r$perelec, iter = it, Nt = Nt)
+  vi_diag_list[[it]] <- mutate(r$virtual, iter = it, Nt = Nt)
+}
+
+perelec_all <- bind_rows(pe_diag_list)
+virtual_all <- bind_rows(vi_diag_list)
+
+save(
+  perelec_all,
+  virtual_all,
+  file = "data/simres.RData"
+)
+
+
 # Main simulation: 10,000 iterations, 50 trials per condition
 niter  <- 10000
 notify <- 500
@@ -187,30 +216,3 @@ save(
   file = "data/simres_n50.RData"
 )
 
-# Independent diagnostic simulation: 1,000 new iterations at 50 trials per condition.
-# This is a separate Monte Carlo run, not a subset of the 10,000-iteration main run.
-niter_diag  <- 1000
-notify_diag <- 100
-
-pe_diag_list <- vector("list", niter_diag)
-vi_diag_list <- vector("list", niter_diag)
-
-for(it in seq_len(niter_diag)){
-  if(it %% notify_diag == 0){
-    message("diagnostic iteration ", it, " / ", niter_diag)
-  }
-
-  r <- experiment_onsets()
-
-  pe_diag_list[[it]] <- mutate(r$perelec, iter = it, Nt = Nt)
-  vi_diag_list[[it]] <- mutate(r$virtual, iter = it, Nt = Nt)
-}
-
-perelec_all <- bind_rows(pe_diag_list)
-virtual_all <- bind_rows(vi_diag_list)
-
-save(
-  perelec_all,
-  virtual_all,
-  file = "data/simres.RData"
-)
